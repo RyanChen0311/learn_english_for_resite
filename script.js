@@ -1,197 +1,216 @@
+/**
+ * script.js — English Vocabulary Learning App
+ *
+ * Features
+ * --------
+ * - Add English words with Chinese translations
+ * - Auto-generates letter-by-letter spelling display (e.g. "c • a • t")
+ * - Text-to-speech via Web Speech API:
+ *     1. Pronounce the full word (en-US)
+ *     2. Spell each letter aloud with pauses
+ *     3. Read the Chinese translation (zh-TW)
+ * - Persist vocabulary to localStorage
+ * - Save / load / delete named word-list records
+ * - Keyboard shortcut: Enter in either input field adds the word
+ *
+ * Storage keys
+ * ------------
+ * - "vocabulary"         → current word list (Array)
+ * - "vocabulary_records" → saved named records (Object)
+ */
+
+'use strict';
+
 class VocabularyManager {
-    constructor() {
-        this.words = JSON.parse(localStorage.getItem('vocabulary')) || [];
-        this.records = JSON.parse(localStorage.getItem('vocabulary_records')) || {};
-        this.initializeElements();
-        this.bindEvents();
-        this.renderWords();
-        this.updateRecordList();
+
+  // ── Constructor ────────────────────────────────────────────────────────
+
+  constructor() {
+    this.words   = JSON.parse(localStorage.getItem('vocabulary'))         || [];
+    this.records = JSON.parse(localStorage.getItem('vocabulary_records')) || {};
+
+    this._initElements();
+    this._bindEvents();
+    this._renderWords();
+    this._updateRecordList();
+  }
+
+  // ── DOM initialisation ─────────────────────────────────────────────────
+
+  _initElements() {
+    this.englishInput       = document.getElementById('englishWord');
+    this.chineseInput       = document.getElementById('chineseTranslation');
+    this.addButton          = document.getElementById('addWord');
+    this.wordContainer      = document.getElementById('wordContainer');
+    this.wordTemplate       = document.getElementById('word-template');
+
+    this.recordNameInput    = document.getElementById('recordName');
+    this.saveRecordButton   = document.getElementById('saveRecord');
+    this.recordList         = document.getElementById('recordList');
+    this.loadRecordButton   = document.getElementById('loadRecord');
+    this.deleteRecordButton = document.getElementById('deleteRecord');
+  }
+
+  // ── Event binding ──────────────────────────────────────────────────────
+
+  _bindEvents() {
+    this.addButton.addEventListener('click', () => this.addWord());
+    this.englishInput.addEventListener('keypress',  e => { if (e.key === 'Enter') this.addWord(); });
+    this.chineseInput.addEventListener('keypress',  e => { if (e.key === 'Enter') this.addWord(); });
+
+    this.saveRecordButton.addEventListener('click',   () => this._saveRecord());
+    this.loadRecordButton.addEventListener('click',   () => this._loadRecord());
+    this.deleteRecordButton.addEventListener('click', () => this._deleteRecord());
+  }
+
+  // ── Word management ────────────────────────────────────────────────────
+
+  /**
+   * Read input fields, validate, and append a new word entry.
+   */
+  addWord() {
+    const english = this.englishInput.value.trim();
+    const chinese = this.chineseInput.value.trim();
+
+    if (!english || !chinese) {
+      alert('Please enter both English word and Chinese translation.');
+      return;
     }
 
-    initializeElements() {
-        this.englishInput = document.getElementById('englishWord');
-        this.chineseInput = document.getElementById('chineseTranslation');
-        this.addButton = document.getElementById('addWord');
-        this.wordContainer = document.getElementById('wordContainer');
-        this.wordTemplate = document.getElementById('word-template');
-        
-        // Record management elements
-        this.recordNameInput = document.getElementById('recordName');
-        this.saveRecordButton = document.getElementById('saveRecord');
-        this.recordList = document.getElementById('recordList');
-        this.loadRecordButton = document.getElementById('loadRecord');
-        this.deleteRecordButton = document.getElementById('deleteRecord');
+    this.words.push({
+      id:      Date.now(),
+      english,
+      chinese,
+      spelling: english.split('').join(' • '),
+    });
+
+    this._saveWords();
+    this._renderWords();
+    this._clearInputs();
+  }
+
+  /**
+   * Remove a word entry by its ID.
+   * @param {number} id
+   */
+  deleteWord(id) {
+    this.words = this.words.filter(w => w.id !== id);
+    this._saveWords();
+    this._renderWords();
+  }
+
+  // ── Text-to-speech ─────────────────────────────────────────────────────
+
+  /**
+   * Speak a word using the Web Speech API:
+   *   1. Full pronunciation (en-US)
+   *   2. Letter-by-letter spelling with 300 ms gaps
+   *   3. Chinese translation (zh-TW)
+   *
+   * @param {string} word     English word to pronounce and spell
+   * @param {string} chinese  Chinese translation to read at the end
+   */
+  async speakWord(word, chinese) {
+    speechSynthesis.cancel();
+
+    const speak = (text, lang = 'en-US') =>
+      new Promise(resolve => {
+        const utt   = new SpeechSynthesisUtterance(text);
+        utt.lang    = lang;
+        utt.onend   = resolve;
+        speechSynthesis.speak(utt);
+      });
+
+    const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+    await speak(word);
+    await pause(800);
+
+    for (const letter of word.split('')) {
+      await speak(letter);
+      await pause(300);
     }
 
-    bindEvents() {
-        this.addButton.addEventListener('click', () => this.addWord());
-        this.englishInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') this.addWord();
-        });
-        this.chineseInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') this.addWord();
-        });
+    await pause(800);
+    await speak(chinese, 'zh-TW');
+  }
 
-        // Record management events
-        this.saveRecordButton.addEventListener('click', () => this.saveRecord());
-        this.loadRecordButton.addEventListener('click', () => this.loadRecord());
-        this.deleteRecordButton.addEventListener('click', () => this.deleteRecord());
-    }
+  // ── Rendering ──────────────────────────────────────────────────────────
 
-    addWord() {
-        const english = this.englishInput.value.trim();
-        const chinese = this.chineseInput.value.trim();
+  _renderWords() {
+    this.wordContainer.innerHTML = '';
 
-        if (!english || !chinese) {
-            alert('Please enter both English word and Chinese translation');
-            return;
-        }
+    this.words.forEach(word => {
+      const el = this.wordTemplate.content.cloneNode(true);
 
-        const word = {
-            id: Date.now(),
-            english,
-            chinese,
-            spelling: this.getSpelling(english)
-        };
+      el.querySelector('.english-word').textContent      = word.english;
+      el.querySelector('.spelling').textContent          = word.spelling;
+      el.querySelector('.chinese-translation').textContent = word.chinese;
 
-        this.words.push(word);
-        this.saveWords();
-        this.renderWords();
-        this.clearInputs();
-    }
+      el.querySelector('.speak-btn').addEventListener('click',  () => this.speakWord(word.english, word.chinese));
+      el.querySelector('.delete-btn').addEventListener('click', () => this.deleteWord(word.id));
 
-    getSpelling(word) {
-        return word.split('').join(' • ');
-    }
+      this.wordContainer.appendChild(el);
+    });
+  }
 
-    async speakWord(word, chinese) {
-        // Cancel any ongoing speech
-        speechSynthesis.cancel();
+  // ── Record management ──────────────────────────────────────────────────
 
-        // Function to create a promise that resolves when speech ends
-        const speak = (text, lang = 'en-US') => {
-            return new Promise(resolve => {
-                const utterance = new SpeechSynthesisUtterance(text);
-                utterance.lang = lang;
-                utterance.onend = resolve;
-                speechSynthesis.speak(utterance);
-            });
-        };
+  _saveRecord() {
+    const name = this.recordNameInput.value.trim();
+    if (!name) { alert('Please enter a name for the record.'); return; }
 
-        // First speak the full word
-        await speak(word);
+    this.records[name] = [...this.words];
+    localStorage.setItem('vocabulary_records', JSON.stringify(this.records));
+    this._updateRecordList();
+    this.recordNameInput.value = '';
+    alert(`Record "${name}" saved.`);
+  }
 
-        // Add a pause before spelling
-        await new Promise(resolve => setTimeout(resolve, 800));
+  _loadRecord() {
+    const name = this.recordList.value;
+    if (!name) { alert('Please select a record to load.'); return; }
 
-        // Speak each letter
-        const letters = word.split('');
-        for (const letter of letters) {
-            await speak(letter);
-            // Add a small pause between letters
-            await new Promise(resolve => setTimeout(resolve, 300));
-        }
+    this.words = [...this.records[name]];
+    this._saveWords();
+    this._renderWords();
+  }
 
-        // Add a pause before Chinese
-        await new Promise(resolve => setTimeout(resolve, 800));
+  _deleteRecord() {
+    const name = this.recordList.value;
+    if (!name) { alert('Please select a record to delete.'); return; }
 
-        // Speak the Chinese translation
-        await speak(chinese, 'zh-CN');
-    }
+    if (!confirm(`Delete record "${name}"?`)) return;
 
-    deleteWord(id) {
-        this.words = this.words.filter(word => word.id !== id);
-        this.saveWords();
-        this.renderWords();
-    }
+    delete this.records[name];
+    localStorage.setItem('vocabulary_records', JSON.stringify(this.records));
+    this._updateRecordList();
+    alert(`Record "${name}" deleted.`);
+  }
 
-    saveWords() {
-        localStorage.setItem('vocabulary', JSON.stringify(this.words));
-    }
+  _updateRecordList() {
+    this.recordList.innerHTML = '<option value="">Select a record</option>';
+    Object.keys(this.records).forEach(name => {
+      const opt   = document.createElement('option');
+      opt.value   = name;
+      opt.textContent = name;
+      this.recordList.appendChild(opt);
+    });
+  }
 
-    clearInputs() {
-        this.englishInput.value = '';
-        this.chineseInput.value = '';
-        this.englishInput.focus();
-    }
+  // ── localStorage helpers ───────────────────────────────────────────────
 
-    renderWords() {
-        this.wordContainer.innerHTML = '';
-        
-        this.words.forEach(word => {
-            const wordElement = this.wordTemplate.content.cloneNode(true);
-            
-            const englishWord = wordElement.querySelector('.english-word');
-            const spelling = wordElement.querySelector('.spelling');
-            const chineseTranslation = wordElement.querySelector('.chinese-translation');
-            const speakBtn = wordElement.querySelector('.speak-btn');
-            const deleteBtn = wordElement.querySelector('.delete-btn');
-            
-            englishWord.textContent = word.english;
-            spelling.textContent = word.spelling;
-            chineseTranslation.textContent = word.chinese;
-            
-            speakBtn.addEventListener('click', () => this.speakWord(word.english, word.chinese));
-            deleteBtn.addEventListener('click', () => this.deleteWord(word.id));
-            
-            this.wordContainer.appendChild(wordElement);
-        });
-    }
+  _saveWords() {
+    localStorage.setItem('vocabulary', JSON.stringify(this.words));
+  }
 
-    // Record management methods
-    saveRecord() {
-        const name = this.recordNameInput.value.trim();
-        if (!name) {
-            alert('Please enter a name for the record');
-            return;
-        }
-
-        this.records[name] = [...this.words];
-        localStorage.setItem('vocabulary_records', JSON.stringify(this.records));
-        this.updateRecordList();
-        this.recordNameInput.value = '';
-        alert('Record saved successfully!');
-    }
-
-    loadRecord() {
-        const selectedRecord = this.recordList.value;
-        if (!selectedRecord) {
-            alert('Please select a record to load');
-            return;
-        }
-
-        this.words = [...this.records[selectedRecord]];
-        this.saveWords();
-        this.renderWords();
-    }
-
-    deleteRecord() {
-        const selectedRecord = this.recordList.value;
-        if (!selectedRecord) {
-            alert('Please select a record to delete');
-            return;
-        }
-
-        if (confirm(`Are you sure you want to delete the record "${selectedRecord}"?`)) {
-            delete this.records[selectedRecord];
-            localStorage.setItem('vocabulary_records', JSON.stringify(this.records));
-            this.updateRecordList();
-            alert('Record deleted successfully!');
-        }
-    }
-
-    updateRecordList() {
-        this.recordList.innerHTML = '<option value="">Select a record</option>';
-        Object.keys(this.records).forEach(recordName => {
-            const option = document.createElement('option');
-            option.value = recordName;
-            option.textContent = recordName;
-            this.recordList.appendChild(option);
-        });
-    }
+  _clearInputs() {
+    this.englishInput.value  = '';
+    this.chineseInput.value  = '';
+    this.englishInput.focus();
+  }
 }
 
-// Initialize the application
-document.addEventListener('DOMContentLoaded', () => {
-    new VocabularyManager();
-}); 
+// ── Boot ───────────────────────────────────────────────────────────────────
+
+document.addEventListener('DOMContentLoaded', () => new VocabularyManager());
